@@ -511,7 +511,11 @@ function syncToServer(){
   }, 800);
 }
 /* 被服务器判定过期时，拉取服务器最新数据替换本地（旧缓存的改动会被丢弃，以服务器为准） */
+let __lastPull=0;
 function pullServer(){
+  /* 防闪屏阀：10 秒内不重复拉取重绘 */
+  if(Date.now()-__lastPull<10000) return Promise.resolve({__pulled:true});
+  __lastPull=Date.now();
   return probeApi().then(base=>fetch(base+'/api/db',{cache:'no-store'})).then(r=>r.json()).then(d=>{
     if(d && d.users && d.orders){
       Object.keys(DB).forEach(k=>delete DB[k]); Object.assign(DB, d);
