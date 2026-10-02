@@ -407,7 +407,33 @@ const DB = (function(){
   }catch(e){}
   return buildDemo();
 })();
-function saveDb(){ try{ localStorage.setItem('factory_db_v2', JSON.stringify(DB)); }catch(e){} }
+/* 启动时：若本机没有数据，尝试从服务器（管理员电脑）拉取集中数据库 */
+(function(){
+  try{
+    if(localStorage.getItem('factory_db_v2')) return;
+    const url=location.protocol==='file:' ? 'http://127.0.0.1:8000/api/db' : '/api/db';
+    fetch(url).then(r=>r.json()).then(d=>{
+      if(d && d.users && d.orders && d.orders.length){ Object.keys(DB).forEach(k=>delete DB[k]); Object.assign(DB, d); saveDb(); }
+    }).catch(()=>{});
+  }catch(e){}
+})();
+function saveDb(){ try{ localStorage.setItem('factory_db_v2', JSON.stringify(DB)); }catch(e){} syncToServer(); }
+/* 同步到本机服务器（管理员电脑）：同源 POST /api/db，服务器自动备份 */
+let __syncTimer=null, __syncStatus='idle';
+function syncToServer(){
+  if(!window.fetch || !DB || !DB.users) return;
+  if(__syncTimer){ clearTimeout(__syncTimer); }
+  __syncTimer=setTimeout(()=>{
+    const url=location.protocol==='file:' ? 'http://127.0.0.1:8000/api/db' : '/api/db';
+    try{
+      __syncStatus='syncing';
+      fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(DB),keepalive:true})
+        .then(r=>r.json()).then(j=>{ __syncStatus = (j&&j.ok)?'ok':'err'; })
+        .catch(()=>{ __syncStatus='offline'; });
+    }catch(e){ __syncStatus='offline'; }
+  }, 800);
+}
+function syncStatus(){ return __syncStatus; }
 const state = {
   user:null, view:'login', activeTab:'',
   adminTab:'dashboard', myOrdersTab:'', myClaimsTab:'all',
@@ -1383,6 +1409,21 @@ function toast(msg){
 }
 function bindClock2(){bindClock();}
 setInterval(()=>{const c=$('clock');if(c)c.textContent=new Date().toTimeString().slice(0,5);},30000);
+
+/* 同步状态指示器：右下角小胶囊，显示数据是否已备份到本机 */
+function syncIndicator(){
+  let el=document.getElementById('sync-dot');
+  if(!el){
+    el=document.createElement('div'); el.id='sync-dot';
+    el.style.cssText='position:fixed;right:12px;bottom:14px;z-index:9999;font-size:11px;padding:4px 10px;border-radius:999px;background:rgba(0,0,0,.55);color:#fff;font-family:sans-serif;pointer-events:none;';
+    document.body.appendChild(el);
+  }
+  const m={idle:'○ 待同步',syncing:'◌ 同步中…',ok:'● 已备份到本机',err:'⚠ 备份失败',offline:'○ 离线(仅本地)'};
+  const s=__syncStatus||'idle';
+  el.textContent=m[s]||s;
+  el.style.background=s==='ok'?'rgba(34,160,80,.85)':s==='err'?'rgba(200,60,50,.85)':s==='syncing'?'rgba(0,120,200,.85)':'rgba(0,0,0,.55)';
+}
+setInterval(syncIndicator,2000); syncIndicator();
 
 /* 启动 */
 render();
