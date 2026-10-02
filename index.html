@@ -470,15 +470,21 @@ function probeApi(){
 }
 probeApi();
 
-/* 启动时：本地无数据或服务器更新，则从服务器（管理员电脑）拉取集中数据库（登录页不打断输入） */
+/* 启动时：必拉服务器并合并（补回本地缺失的项目/用户），服务器更新则整体替换；登录页不打断输入 */
 (function(){
   probeApi().then(base=>{
     fetch(base+'/api/db',{cache:'no-store'}).then(r=>r.json()).then(d=>{
-      if(d && d.users && d.orders && d.orders.length){
+      if(d && d.users && d.orders){
+        let changed=false;
         if(!localStorage.getItem('factory_db_v2') || (d.updatedAt||0) > (DB.updatedAt||0) + 5000){
-          Object.keys(DB).forEach(k=>delete DB[k]); Object.assign(DB, d); saveDb();
-          if(state.user) render();
+          Object.keys(DB).forEach(k=>delete DB[k]); Object.assign(DB, d); changed=true;
         }
+        /* 合并：服务器有而本地缺的项目/用户补回（修复旧缓存缺项目） */
+        const pids=new Set(DB.projects.map(p=>p.id));
+        (d.projects||[]).forEach(p=>{ if(!pids.has(p.id)){ DB.projects.push(p); changed=true; } });
+        const phs=new Set(DB.users.map(u=>u.phone));
+        (d.users||[]).forEach(u=>{ if(!phs.has(u.phone)){ DB.users.push(u); changed=true; } });
+        if(changed){ saveDb(); if(state.user) render(); }
       }
     }).catch(()=>{});
   });
