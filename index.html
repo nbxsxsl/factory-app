@@ -438,6 +438,24 @@ function probeApi(){
       if(j && j.users) return '';
     }catch(e){}
     try{
+      /* api.github.com 国内直连稳定且无 CDN 缓存，开机更新即时生效 */
+      const r=await fetch('https://api.github.com/repos/nbxsxsl/factory-app/contents/api-url.txt?cb='+Date.now(),{cache:'no-store'});
+      const j=await r.json();
+      const t=(atob((j.content||'').replace(/\n/g,''))).trim().split(/\s+/)[0];
+      if(/^https:\/\/[a-z0-9\-]+\.trycloudflare\.com$/.test(t)){
+        API_BASE=t; try{ localStorage.setItem('factory_api_base',t); }catch(e){}
+        return t;
+      }
+    }catch(e){}
+    try{
+      const r=await fetch('https://cdn.jsdelivr.net/gh/nbxsxsl/factory-app@main/api-url.txt?cb='+Date.now(),{cache:'no-store'});
+      const t=(await r.text()).trim().split(/\s+/)[0];
+      if(/^https:\/\/[a-z0-9\-]+\.trycloudflare\.com$/.test(t)){
+        API_BASE=t; try{ localStorage.setItem('factory_api_base',t); }catch(e){}
+        return t;
+      }
+    }catch(e){}
+    try{
       const r=await fetch('https://raw.githubusercontent.com/nbxsxsl/factory-app/main/api-url.txt?cb='+Date.now(),{cache:'no-store'});
       const t=(await r.text()).trim().split(/\s+/)[0];
       if(/^https:\/\/[a-z0-9\-]+\.trycloudflare\.com$/.test(t)){
