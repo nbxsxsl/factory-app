@@ -424,18 +424,46 @@ const DB = (function(){
   }catch(e){}
   return buildDemo();
 })();
-/* 启动时：本地无数据或服务器更新，则从服务器（管理员电脑）拉取集中数据库 */
+/* ===== API 服务器地址自动发现 =====
+ * 隧道/局域网/本机打开 → 同源就是服务器；GitHub Pages 打开 → 从仓库 api-url.txt 读取当前隧道地址 */
+let API_BASE = location.protocol==='file:' ? 'http://127.0.0.1:8000' : '';
+let __apiProbe = null;
+function probeApi(){
+  if(__apiProbe) return __apiProbe;
+  __apiProbe = (async()=>{
+    if(location.protocol==='file:') return 'http://127.0.0.1:8000';
+    try{
+      const r=await fetch('/api/db',{cache:'no-store'});
+      const j=await r.json();
+      if(j && j.users) return '';
+    }catch(e){}
+    try{
+      const r=await fetch('https://raw.githubusercontent.com/nbxsxsl/factory-app/main/api-url.txt?cb='+Date.now(),{cache:'no-store'});
+      const t=(await r.text()).trim().split(/\s+/)[0];
+      if(/^https:\/\/[a-z0-9\-]+\.trycloudflare\.com$/.test(t)){
+        API_BASE=t; try{ localStorage.setItem('factory_api_base',t); }catch(e){}
+        return t;
+      }
+    }catch(e){}
+    try{ API_BASE = localStorage.getItem('factory_api_base')||''; }catch(e){}
+    return API_BASE;
+  })();
+  return __apiProbe;
+}
+probeApi();
+
+/* 启动时：本地无数据或服务器更新，则从服务器（管理员电脑）拉取集中数据库（登录页不打断输入） */
 (function(){
-  try{
-    const url=location.protocol==='file:' ? 'http://127.0.0.1:8000/api/db' : '/api/db';
-    fetch(url).then(r=>r.json()).then(d=>{
+  probeApi().then(base=>{
+    fetch(base+'/api/db',{cache:'no-store'}).then(r=>r.json()).then(d=>{
       if(d && d.users && d.orders && d.orders.length){
         if(!localStorage.getItem('factory_db_v2') || (d.updatedAt||0) > (DB.updatedAt||0) + 5000){
-          Object.keys(DB).forEach(k=>delete DB[k]); Object.assign(DB, d); saveDb(); render();
+          Object.keys(DB).forEach(k=>delete DB[k]); Object.assign(DB, d); saveDb();
+          if(state.user) render();
         }
       }
     }).catch(()=>{});
-  }catch(e){}
+  });
 })();
 /* 迁移：确保最高权限账号存在（所有设备自动获得，无需清缓存） */
 if(!DB.users.some(u=>u.phone==='13251903281')){
@@ -448,24 +476,23 @@ function syncToServer(){
   if(!window.fetch || !DB || !DB.users) return;
   if(__syncTimer){ clearTimeout(__syncTimer); }
   __syncTimer=setTimeout(()=>{
-    const url=location.protocol==='file:' ? 'http://127.0.0.1:8000/api/db' : '/api/db';
     try{
       __syncStatus='syncing';
-      fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(DB),keepalive:true})
-        .then(r=>{ if(r.status===409){ return pullServer(); } return r.json(); })
-        .then(j=>{ if(j&&j.__pulled){ __syncStatus='ok'; return; } __syncStatus = (j&&j.ok)?'ok':'err'; })
+      probeApi().then(base=>{
+        return fetch(base+'/api/db',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(DB),keepalive:true});
+      }).then(r=>{ if(r.status===409){ return pullServer(); } return r.json(); })
+        .then(j=>{ if(j&&j.__pulled){ __syncStatus='ok'; if(state.user) render(); return; } __syncStatus = (j&&j.ok)?'ok':'err'; })
         .catch(()=>{ __syncStatus='offline'; });
     }catch(e){ __syncStatus='offline'; }
   }, 800);
 }
 /* 被服务器判定过期时，拉取服务器最新数据替换本地（旧缓存的改动会被丢弃，以服务器为准） */
 function pullServer(){
-  const url=location.protocol==='file:' ? 'http://127.0.0.1:8000/api/db' : '/api/db';
-  return fetch(url).then(r=>r.json()).then(d=>{
+  return probeApi().then(base=>fetch(base+'/api/db',{cache:'no-store'})).then(r=>r.json()).then(d=>{
     if(d && d.users && d.orders){
       Object.keys(DB).forEach(k=>delete DB[k]); Object.assign(DB, d);
       try{ localStorage.setItem('factory_db_v2', JSON.stringify(DB)); }catch(e){}
-      render();
+      if(state.user) render();
       return {__pulled:true};
     }
     return {ok:false};
@@ -553,7 +580,7 @@ function setScrewModel(i,val){
 
 /* OCR 模拟：返回整张单据识别结果 + 子件螺丝清单 */
 /* 拍照：压缩后上传服务器 OCR 识别，自动回填；失败则手动填写 */
-function apiBase(){ return location.protocol==='file:' ? 'http://127.0.0.1:8000' : ''; }
+function apiBase(){ return API_BASE || ''; }
 function compressImage(file, maxPx, cb){
   const img=new Image();
   const url=URL.createObjectURL(file);
@@ -577,7 +604,7 @@ function onPhoto(input){
     rd.onload=()=>{ e.photoLocal=rd.result; render(); };
     rd.readAsDataURL(blob);
     const fd=new FormData(); fd.append('file', blob, 'photo.jpg');
-    fetch(apiBase()+'/api/ocr',{method:'POST',body:fd}).then(r=>r.json()).then(j=>{
+    probeApi().then(base=>fetch(base+'/api/ocr',{method:'POST',body:fd})).then(r=>r.json()).then(j=>{
       state.ocrBusy=false;
       e.detected=true; e.screwList=[];
       if(j&&j.ok){
@@ -714,11 +741,10 @@ function login(){
     else { try{ localStorage.removeItem('factory_login'); }catch(e){} }
     state.user=u; afterLogin(); return;
   }
-  /* 本地无此账号：服务器验证兑底（新管理员手机本地数据旧/独立时也能登录） */
+  /* 本地无此账号：服务器验证兑底（GitHub Pages 静态页也会自动找到本机服务器验证） */
   if(window.fetch){
-    const url=location.protocol==='file:' ? 'http://127.0.0.1:8000/api/login' : '/api/login';
     toast('正在验证账号…');
-    fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({phone,pwd})})
+    probeApi().then(base=>fetch(base+'/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({phone,pwd})}))
       .then(r=>r.json()).then(j=>{
         if(j&&j.ok&&j.user){
           if(j.db&&j.db.users&&j.db.orders){ Object.keys(DB).forEach(k=>delete DB[k]); Object.assign(DB,j.db); try{ localStorage.setItem('factory_db_v2', JSON.stringify(DB)); }catch(e){} }
