@@ -534,6 +534,25 @@ function pullServer(){
   });
 }
 function syncStatus(){ return __syncStatus; }
+/* WebSocket 实时同步：服务器数据变更时主动推送，各设备秒级拉取，不再轮询卡顿 */
+let __ws=null, __wsRetry=0;
+function wsConnect(){
+  if(__ws) return;
+  probeApi().then(base=>{
+    if(!window.WebSocket) return;
+    let url;
+    if(!base){ url=(location.protocol==='https:'?'wss://':'ws://')+location.host+'/ws'; }
+    else { url=base.replace(/^http/,'ws')+'/ws'; }
+    try{ __ws=new WebSocket(url); }catch(e){ return; }
+    __ws.onopen=()=>{ __wsRetry=0; try{ __ws.send(JSON.stringify({type:'ping'})); }catch(e){} };
+    __ws.onmessage=(ev)=>{
+      try{ const d=JSON.parse(ev.data); if(d.type==='db_updated'){ __syncStatus='ok'; pullServer(); } }catch(e){}
+    };
+    __ws.onclose=()=>{ __ws=null; if(__wsRetry<6){ __wsRetry++; setTimeout(wsConnect, 2000*__wsRetry); } };
+    __ws.onerror=()=>{ try{ __ws.close(); }catch(e){} };
+  });
+}
+wsConnect();
 const state = {
   user:null, view:'login', activeTab:'',
   adminTab:'dashboard', myOrdersTab:'', myClaimsTab:'all',
@@ -616,30 +635,53 @@ function setScrewModel(i,val){
 /* OCR 模拟：返回整张单据识别结果 + 子件螺丝清单 */
 /* 拍照：压缩后上传服务器 OCR 识别，自动回填；失败则手动填写 */
 function apiBase(){ return API_BASE || ''; }
+/* 拍照识别优化：EXIF 自动转正 → 限边 2000px → 灰度 + 对比度拉伸（单据文字更清晰）→ JPEG 直传 */
 function compressImage(file, maxPx, cb){
-  const img=new Image();
-  const url=URL.createObjectURL(file);
-  img.onload=()=>{
-    const sc=Math.min(1, maxPx/Math.max(img.width,img.height));
-    const c=document.createElement('canvas');
-    c.width=Math.round(img.width*sc); c.height=Math.round(img.height*sc);
-    c.getContext('2d').drawImage(img,0,0,c.width,c.height);
-    c.toBlob(b=>{ URL.revokeObjectURL(url); cb(b||file); }, 'image/jpeg', 0.82);
+  const done=(canvas)=>canvas.toBlob(b=>cb(b||file),'image/jpeg',0.9);
+  const enhance=(img, sc)=>{
+    const w=Math.round(img.width*sc), h=Math.round(img.height*sc);
+    const c=document.createElement('canvas'); c.width=w; c.height=h;
+    const ctx=c.getContext('2d'); ctx.drawImage(img,0,0,w,h);
+    try{
+      const d=ctx.getImageData(0,0,w,h), px=d.data;
+      /* 灰度直方图 5%~95% 分位拉伸，提升小字对比度 */
+      const hist=new Array(256).fill(0); const gray=new Uint8ClampedArray(w*h);
+      for(let i=0;i<px.length;i+=4){ const g=(px[i]*299+px[i+1]*587+px[i+2]*114)/1000; gray[i/4]=g; hist[g|0]++; }
+      const total=w*h; let lo=0,hi=255,acc=0;
+      for(let i=0;i<256;i++){ acc+=hist[i]; if(acc>=total*0.05){ lo=i; break; } }
+      acc=0; for(let i=255;i>=0;i--){ acc+=hist[i]; if(acc>=total*0.05){ hi=i; break; } }
+      if(hi-lo<40){ lo=0; hi=255; }
+      for(let i=0,j=0;i<px.length;i+=4,j++){
+        let v=(gray[j]-lo)*255/(hi-lo); v=v<0?0:v>255?255:v;
+        px[i]=px[i+1]=px[i+2]=v;
+      }
+      ctx.putImageData(d,0,0);
+    }catch(e){}
+    return c;
   };
-  img.onerror=()=>cb(file);
-  img.src=url;
+  if(window.createImageBitmap){
+    createImageBitmap(file,{imageOrientation:'from-image'}).then(bmp=>{
+      const sc=Math.min(1,maxPx/Math.max(bmp.width,bmp.height));
+      done(enhance(bmp,sc));
+    }).catch(()=>{ legacy(); });
+  } else legacy();
+  function legacy(){
+    const img=new Image(); const url=URL.createObjectURL(file);
+    img.onload=()=>{ const sc=Math.min(1,maxPx/Math.max(img.width,img.height)); done(enhance(img,sc)); URL.revokeObjectURL(url); };
+    img.onerror=()=>{ URL.revokeObjectURL(url); cb(file); };
+    img.src=url;
+  }
 }
 function onPhoto(input){
   const f=input.files&&input.files[0];
   if(!f)return;
   state.ocrBusy=true; render();
-  compressImage(f, 1600, (blob)=>{
+  compressImage(f, 2000, (blob)=>{
     const e=state.entry;
     const rd=new FileReader();
     rd.onload=()=>{ e.photoLocal=rd.result; render(); };
     rd.readAsDataURL(blob);
-    const fd=new FormData(); fd.append('file', blob, 'photo.jpg');
-    probeApi().then(base=>fetch(base+'/api/ocr',{method:'POST',body:fd})).then(r=>r.json()).then(j=>{
+    probeApi().then(base=>fetch(base+'/api/ocr',{method:'POST',headers:{'Content-Type':'image/jpeg'},body:blob})).then(r=>r.json()).then(j=>{
       state.ocrBusy=false;
       e.detected=true; e.screwList=[];
       if(j&&j.ok){
@@ -846,7 +888,7 @@ function logout(){
   /* 完整退出：销毁服务器端 token + 清空本地凭证 */
   try{
     const token=localStorage.getItem('factory_token');
-    if(token){ probeApi().then(base=>fetch(base+'/api/logout',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token})})).catch(()=>{}); }
+    if(token){ probeApi().then(base=>fetch(base+'/api/logout',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+token},body:JSON.stringify({token})})).catch(()=>{}); }
   }catch(e){}
   try{ localStorage.removeItem('factory_token'); localStorage.removeItem('factory_login'); }catch(e){}
   state.user=null;state.view='login';state.activeTab='';state.rememberPwd=false;render();
@@ -1808,7 +1850,7 @@ setInterval(syncIndicator,2000); syncIndicator();
     if(token){
       const base=await probeApi();
       try{
-        const r=await fetchTimeout(base+'/api/check',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token})});
+        const r=await fetchTimeout(base+'/api/check',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+token},body:JSON.stringify({token})});
         const j=await r.json();
         if(j&&j.ok&&j.user){
           if(j.db&&j.db.users&&j.db.orders){ Object.keys(DB).forEach(k=>delete DB[k]); Object.assign(DB,j.db); try{ localStorage.setItem('factory_db_v2', JSON.stringify(DB)); }catch(e){} }
