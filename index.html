@@ -2750,7 +2750,7 @@ function probeApi(){
       const r=await fetch('https://api.github.com/repos/nbxsxsl/factory-app/contents/api-url.txt?cb='+Date.now(),{cache:'no-store'});
       const j=await r.json();
       const t=(atob((j.content||'').replace(/\n/g,''))).trim().split(/\s+/)[0];
-      if(/^https:\/\/[a-z0-9\-]+\.trycloudflare\.com$/.test(t)){
+      if(/^https:\/\/[a-z0-9\-\.]+\.(trycloudflare\.com|ts\.net)$/.test(t)){
         API_BASE=t; try{ localStorage.setItem('factory_api_base',t); }catch(e){}
         return t;
       }
@@ -2758,7 +2758,7 @@ function probeApi(){
     try{
       const r=await fetch('https://cdn.jsdelivr.net/gh/nbxsxsl/factory-app@main/api-url.txt?cb='+Date.now(),{cache:'no-store'});
       const t=(await r.text()).trim().split(/\s+/)[0];
-      if(/^https:\/\/[a-z0-9\-]+\.trycloudflare\.com$/.test(t)){
+      if(/^https:\/\/[a-z0-9\-\.]+\.(trycloudflare\.com|ts\.net)$/.test(t)){
         API_BASE=t; try{ localStorage.setItem('factory_api_base',t); }catch(e){}
         return t;
       }
@@ -2766,7 +2766,7 @@ function probeApi(){
     try{
       const r=await fetch('https://raw.githubusercontent.com/nbxsxsl/factory-app/main/api-url.txt?cb='+Date.now(),{cache:'no-store'});
       const t=(await r.text()).trim().split(/\s+/)[0];
-      if(/^https:\/\/[a-z0-9\-]+\.trycloudflare\.com$/.test(t)){
+      if(/^https:\/\/[a-z0-9\-\.]+\.(trycloudflare\.com|ts\.net)$/.test(t)){
         API_BASE=t; try{ localStorage.setItem('factory_api_base',t); }catch(e){}
         return t;
       }
