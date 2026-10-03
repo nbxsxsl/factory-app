@@ -3205,7 +3205,7 @@ function vRegister(){
     <div class="login-sub">需要管理员生成的邀请码<br/>向管理员索取后再注册</div>
     <div class="login-card">
       <div class="field"><div class="field-label">邀请码</div>
-        <input class="input" id="regCode" maxlength="6" placeholder="如 A3X9K2" value="" style="text-transform:uppercase;letter-spacing:2px"
+        <input class="input" id="regCode" maxlength="6" placeholder="如 A3X9K2" value="${__urlInvite||''}" style="text-transform:uppercase;letter-spacing:2px"
           onkeydown="if(event.key==='Enter'){event.target.blur();register();}"></div>
       ${codes.length?`<div class="text-sm text-3" style="margin-bottom:8px">可用邀请码：${codes.slice(0,3).map(c=>`<b onclick="document.getElementById('regCode').value='${c.code}'" style="cursor:pointer;text-decoration:underline">${c.code}</b>`).join('、')}（点击填入）</div>`:''}
       <div class="field"><div class="field-label">姓名</div>
@@ -4188,19 +4188,16 @@ setInterval(syncIndicator,2000); syncIndicator();
     }
   }catch(e){}
 })();
-/* 扫码进入：URL 带 ?invite=CODE → 直达注册页并预填邀请码 */
+/* 扫码进入：URL 带 ?invite=CODE → 记住邀请码，注册页自动填入 */
+let __urlInvite='';
 (function(){
-  try{
-    const inv=new URLSearchParams(location.search).get('invite');
-    if(inv){
-      setTimeout(()=>{
-        if(state.user) return;
-        state.view='register'; render();
-        const el=document.getElementById('regCode');
-        if(el) el.value=String(inv).toUpperCase();
-      }, 400);
-    }
-  }catch(e){}
+  try{ __urlInvite=(new URLSearchParams(location.search).get('invite')||'').toUpperCase(); }catch(e){}
+  if(__urlInvite){
+    setTimeout(()=>{
+      if(state.user) return;
+      state.view='register'; render();
+    }, 400);
+  }
 })();
 render();
 </script>
