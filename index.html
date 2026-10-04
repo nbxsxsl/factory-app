@@ -4268,7 +4268,7 @@ function syncIndicator(){
   let el=document.getElementById('sync-dot');
   if(!el){
     el=document.createElement('div'); el.id='sync-dot';
-    el.style.cssText='position:fixed;right:12px;bottom:14px;z-index:9999;font-size:11px;padding:4px 10px;border-radius:999px;background:rgba(0,0,0,.55);color:#fff;font-family:sans-serif;pointer-events:none;';
+    el.style.cssText='position:fixed;top:5px;left:50%;transform:translateX(-50%);z-index:9999;font-size:10.5px;padding:2px 9px;border-radius:999px;background:rgba(0,0,0,.38);color:#fff;font-family:sans-serif;pointer-events:none;white-space:nowrap;';
     document.body.appendChild(el);
   }
   const m={idle:'○ 待同步',syncing:'◌ 同步中…',ok:'● 已备份到本机',err:'⚠ 备份失败',offline:'○ 离线(仅本地)'};
