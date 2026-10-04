@@ -3871,8 +3871,17 @@ function removeUser(id){
   if(u.role==='superadmin'){toast('最高权限账号不可删除');return;}
   if(u.role==='admin'&&!isSuper()){toast('仅最高权限可移除管理员');return;}
   if(u.role==='admin'&&DB.users.filter(x=>x.role==='admin').length<=1){toast('至少保留一名管理员');return;}
+  /* 级联清除：该员工的报工/申领/改数申请一并删除，工资统计不再显示已删员工 */
+  const wN=DB.works.filter(w=>w.workerId===id).length;
+  const cN=DB.claims.filter(c=>c.workerId===id).length;
+  if(!confirm('确定移除 '+u.name+' 吗？\n其名下 '+wN+' 笔报工、'+cN+' 条申领及全部加工费将一并删除，不可恢复！'))return;
+  DB.works=DB.works.filter(w=>w.workerId!==id);
+  DB.claims=DB.claims.filter(c=>c.workerId!==id);
+  DB.editRequests=(DB.editRequests||[]).filter(r=>r.workerId!==id);
   DB.users=DB.users.filter(x=>x.id!==id);
-  toast('已移除');render();
+  DB.notices.unshift({id:uid('n_'),type:'system',title:'成员已移除',text:u.name+' 已被移除，其名下 '+wN+' 笔报工记录已清除',ts:Date.now(),read:false});
+  saveDb();
+  toast('已移除并清除相关数据');render();
 }
 function createInvite(){
   const code=genCode(6);
