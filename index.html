@@ -2835,6 +2835,19 @@ function pullServer(){
   });
 }
 function syncStatus(){ return __syncStatus; }
+/* 兕底轮询：即使 WebSocket 断开，每 8 秒也会拉一次服务器，保证人员增减等变更及时同步 */
+setInterval(()=>{
+  if(!state.user || __syncStatus==='syncing' || Date.now()-__lastPull<6000) return;
+  probeApi().then(base=>{ if(!base) return; return fetch(base+'/api/db',{cache:'no-store'}); })
+    .then(r=>{ if(!r) return null; return r.json(); })
+    .then(d=>{
+      if(d && d.users && d.orders && (d.updatedAt||0) > (DB.updatedAt||0) + 3000){
+        Object.keys(DB).forEach(k=>delete DB[k]); Object.assign(DB, d);
+        try{ localStorage.setItem('factory_db_v2', JSON.stringify(DB)); }catch(e){}
+        if(state.view!=='login') render();
+      }
+    }).catch(()=>{});
+}, 8000);
 /* WebSocket 实时同步：服务器数据变更时主动推送，各设备秒级拉取，不再轮询卡顿 */
 let __ws=null, __wsRetry=0;
 function wsConnect(){
@@ -3384,7 +3397,7 @@ function vOrderEntry(){
       <div class="field"><div class="field-label">单号 ${e.workNoAuto?'（自动生成，可改）':''}</div><input class="input" value="${e.workNo}" onchange="setEntry('workNo',this.value)"></div>
       <div class="field"><div class="field-label">订单号</div><input class="input" value="${e.saleNo||''}" onchange="setEntry('saleNo',this.value)"></div>
       <div class="field"><div class="field-label">委外料号</div><input class="input" value="${e.productNo||''}" onchange="setEntry('productNo',this.value)"></div>
-      <div class="field"><div class="field-label">委外料品 *</div><input class="input" value="${e.productName||''}" placeholder="必填，如 1#汽泡棒 不锈钢款 组装半成品" onchange="setEntry('productName',this.value)"></div>
+      <div class="field"><div class="field-label">委外料品 *</div><input class="input" value="${e.productName||''}" placeholder="必填，如 1#汽泡棒 不锈��款 组装半成品" onchange="setEntry('productName',this.value)"></div>
       <div class="field"><div class="field-label">工单数量（件）*</div><input class="input" type="number" inputmode="numeric" value="${e.qty||''}" placeholder="必填" onchange="setEntry('qty',this.value)"></div>
       <div class="field"><div class="field-label">发料日期</div><input class="input" type="date" value="${(e.dateStr||'').replace(/\//g,'-')}" onchange="setEntry('dateStr',this.value)"></div>
       <button class="btn-ghost" style="width:100%;margin-top:8px" onclick="retake()">🔄 重拍 / 换照片</button>`}
@@ -3516,7 +3529,7 @@ function vOrderDetail(){
     <div class="card">${dualProgress(o.id,'领用进度','完工进度')}</div>
     <div class="card">
       <div class="card-title">项目定价与分配</div>
-      <div class="text-sm text-3" style="margin-bottom:10px">先设置单价，再点击「生成分配」把项目投入待申领池</div>
+      <div class="text-sm text-3" style="margin-bottom:10px">单价可随时补录/修改（改动后相关报工金额自动更新），未定价也可直接分配</div>
       ${rows.map(s=>`
       <div class="step-item">
         <div class="row-between">
@@ -3535,15 +3548,14 @@ function vOrderDetail(){
     </div>
   </div>`;
 }
-function setStepPrice(oid,sid,v){const o=getOrder(oid);const s=o.steps.find(x=>x.id===sid);if(s){s.price=Number(v)||0;toast('单价已保存');render();}}
+function setStepPrice(oid,sid,v){const o=getOrder(oid);const s=o.steps.find(x=>x.id===sid);if(s){s.price=Number(v)||0;let n=0;DB.works.forEach(w=>{if(w.orderId===oid&&w.stepId===sid){w.price=s.price;w.amount=Number((w.qty*s.price).toFixed(2));n++;}});saveDb();toast(n?('单价已保存，'+n+'笔报工金额已更新'):'单价已保存');render();}}
 function genAlloc(oid){
   const o=getOrder(oid);
   const noPrice=o.steps.filter(s=>!s.price);
-  if(noPrice.length){toast('请先为「'+noPrice.map(s=>s.name).join('、')+'」设置单价');return;}
   o.steps.forEach(s=>{s.assignedQty=s.totalQty;});
   o.allocated=true;
-  DB.notices.unshift({id:uid('n_'),type:'claim',title:'分单完成',text:`${o.workNo} 已生成分配，员工可开始申领`,ts:Date.now(),read:false});
-  toast('已生成分配，员工可申领');
+  DB.notices.unshift({id:uid('n_'),type:'claim',title:'分单完成',text:`${o.workNo} 已生成分配${noPrice.length?('（'+noPrice.map(s=>s.name).join('、')+'暂未定价，可随时补录）'):''}，员工可开始申领`,ts:Date.now(),read:false});
+  toast(noPrice.length?'已生成分配（未定价项目也已投入申领池）':'已生成分配，员工可申领');
   render();
 }
 
@@ -4088,6 +4100,7 @@ function vMySalary(){
   <div class="card hero"><div class="hero-label">加工费合计 · ${range.text}</div><div class="hero-money">¥${money(total)}</div><div class="text-sm" style="opacity:.85">${works.length} 笔 · 共 ${totalQty} 件</div></div>
   <div class="seg">
     <div class="seg-item ${mode==='summary'?'on':''}" onclick="state.workerSalaryView='summary';render()">项目汇总</div>
+    <div class="seg-item ${mode==='byorder'?'on':''}" onclick="state.workerSalaryView='byorder';render()">按订单</div>
     <div class="seg-item ${mode==='detail'?'on':''}" onclick="state.workerSalaryView='detail';render()">全部明细</div>
   </div>
   ${salaryRangeBar('workerSalary')}
@@ -4097,6 +4110,7 @@ function vMySalary(){
     ${items.map(it=>`<div class="tbl-row"><div class="col-name">${it.name}</div><div class="col-qty">${it.qty}</div><div class="col-price">¥${money(it.price)}</div><div class="col-amt">¥${money(it.amount)}</div></div>`).join('')}
     <div class="tbl-row total"><div class="col-name">合计（${works.length} 笔）</div><div class="col-qty">${totalQty}</div><div class="col-price"></div><div class="col-amt">¥${money(total)}</div></div>
   </div>`:''}
+  ${mode==='byorder'?(()=>{const omap=new Map();works.forEach(w=>{if(!omap.has(w.orderId))omap.set(w.orderId,{no:(getOrder(w.orderId)||{}).workNo||'—',qty:0,amount:0,count:0,steps:new Map()});const g=omap.get(w.orderId);g.qty+=w.qty;g.amount+=w.amount;g.count+=1;const o=getOrder(w.orderId)||{steps:[]};const s=(o.steps||[]).find(x=>x.id===w.stepId)||{};const nm=s.name||w.stepId;if(!g.steps.has(nm))g.steps.set(nm,{qty:0,amount:0});const st=g.steps.get(nm);st.qty+=w.qty;st.amount+=w.amount;});const groups=[...omap.entries()].sort((a,b)=>b[0]<a[0]?-1:1);return groups.map(([oid,g])=>`<div class="card"><div class="row-between"><div class="bold">📋 ${g.no}</div><div class="money-plus">¥${money(g.amount)}</div></div><div class="text-sm text-3" style="margin:4px 0 8px">${g.count} 笔 · 共 ${g.qty} 件</div><div class="pay-table">${[...g.steps.entries()].map(([nm,st])=>`<div class="tbl-row"><div class="col-name">${nm}</div><div class="col-qty">${st.qty}</div><div class="col-amt">¥${money(st.amount)}</div></div>`).join('')}</div></div>`).join('');})():''}
   ${mode==='detail'&&details.length>0?`<div class="pay-table">
     <div class="tbl-head"><div style="width:28px">#</div><div style="width:96px">工单号</div><div style="width:90px">项目</div><div style="width:60px;text-align:right">数量</div><div style="width:56px;text-align:right">单价</div><div style="width:70px;text-align:right">金额</div><div style="width:74px;text-align:right">日期</div></div>
     ${details.map((w,i)=>{const o=getOrder(w.orderId)||{steps:[]};const s=(o.steps||[]).find(x=>x.id===w.stepId)||{};return `<div class="tbl-row"><div style="width:28px" class="text-3">${i+1}</div><div style="width:96px">${o.workNo||'—'}</div><div style="width:90px">${s.name||w.stepId}</div><div style="width:60px;text-align:right">${w.qty}</div><div style="width:56px;text-align:right">¥${money(w.price)}</div><div style="width:70px;text-align:right" class="money-plus">¥${money(w.amount)}</div><div style="width:74px;text-align:right" class="text-3">${dayKey(w.ts).slice(5)}</div></div>`;}).join('')}
