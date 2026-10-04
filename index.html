@@ -41,6 +41,11 @@ body{margin:0;background:#E7E9F2;font-family:-apple-system,BlinkMacSystemFont,"P
 .page{padding:14px 16px 90px;animation:fade .22s ease}
 @keyframes fade{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
 .header{padding:10px 16px 14px;}
+.app-shell .page,.page{scrollbar-width:thin}
+.stat-card,.card,.order-card{transition:transform .15s ease,box-shadow .15s ease}
+.order-card:active{transform:scale(.985)}
+.quick-item:active{transform:scale(.94)}
+.quick-item{transition:transform .12s ease}
 .header.row-between{display:flex;align-items:flex-start;justify-content:space-between}
 .header-title{font-size:22px;font-weight:800;letter-spacing:.3px}
 .header-sub{font-size:12.5px;color:var(--text-3);margin-top:4px}
@@ -3331,9 +3336,13 @@ function go(v,tab){
 function vDashboard(){
   const me=state.user;
   const pendingClaims=DB.claims.filter(c=>c.status==='pending');
+  const pendingEdits=(DB.editRequests||[]).filter(r=>r.status==='pending');
   const workers=DB.users.filter(u=>u.role==='worker');
+  const todayWorks=DB.works.filter(w=>isToday(w.ts));
+  const todayQty=todayWorks.reduce((s,w)=>s+w.qty,0);
+  const todayAmt=todayWorks.reduce((s,w)=>s+w.amount,0);
   const remind=DB.settings.deliveryRemindDays;
-  const risky=DB.orders.filter(o=>{const d=daysUntil(o.deliveryDate);return d!==null&&d<=remind;});
+  const risky=DB.orders.filter(o=>{const d=daysUntil(o.deliveryDate);return d!==null&&d<=remind&&orderDoneProgress(o.id)<100;});
   const unread=DB.notices.filter(n=>!n.read).length;
   /* 本周排行 */
   const week=workers.map(u=>({u,amount:DB.works.filter(w=>w.workerId===u.id&&isThisWeek(w.ts)).reduce((s,w)=>s+w.amount,0)})).sort((a,b)=>b.amount-a.amount);
@@ -3347,9 +3356,15 @@ function vDashboard(){
     ${risky.map(o=>{const d=daysUntil(o.deliveryDate);return `<div class="alert-item"><div class="text-2">${o.workNo} · ${o.productName}</div><div class="tag ${d<0?'tag-overdue':'tag-warn'}">${d<0?`逾期${-d}天`:`剩${d}天`}</div></div>`;}).join('')}
   </div>`:''}
   <div class="stats">
+    <div class="stat-card"><div class="stat-num" style="color:var(--primary)">${todayQty.toLocaleString()}</div><div class="stat-label">今日产量(件)</div></div>
+    <div class="stat-card"><div class="stat-num" style="color:var(--green)">¥${money(todayAmt)}</div><div class="stat-label">今日加工费</div></div>
+    <div class="stat-card"><div class="stat-num" style="color:${pendingClaims.length?'var(--orange)':'inherit'}">${pendingClaims.length}</div><div class="stat-label">待审批</div></div>
+    <div class="stat-card"><div class="stat-num" style="color:${pendingEdits.length?'var(--red)':'inherit'}">${pendingEdits.length}</div><div class="stat-label">改数审核</div></div>
+  </div>
+  <div class="stats" style="grid-template-columns:repeat(3,1fr)">
     <div class="stat-card"><div class="stat-num">${DB.orders.length}</div><div class="stat-label">订单总数</div></div>
-    <div class="stat-card"><div class="stat-num" style="color:var(--orange)">${pendingClaims.length}</div><div class="stat-label">待审批</div></div>
     <div class="stat-card"><div class="stat-num" style="color:var(--green)">${workers.length}</div><div class="stat-label">在册员工</div></div>
+    <div class="stat-card"><div class="stat-num" style="color:var(--orange)">${risky.length}</div><div class="stat-label">交期预警</div></div>
   </div>
   <div class="card">
     <div class="card-title">📈 订单进度</div>
@@ -3365,7 +3380,7 @@ function vDashboard(){
       <div class="quick-item" onclick="go('orderEntry')"><div class="quick-ico">📷</div><div class="quick-txt">拍照录入</div></div>
       <div class="quick-item" onclick="go('orders')"><div class="quick-ico">📦</div><div class="quick-txt">订单管理</div></div>
       <div class="quick-item" onclick="go('projects')"><div class="quick-ico">🧩</div><div class="quick-txt">项目管理</div></div>
-      <div class="quick-item" onclick="go('approval')"><div class="quick-ico">✅</div><div class="quick-txt">申领审批</div></div>
+      <div class="quick-item" onclick="go('approval')"><div style="position:relative"><div class="quick-ico">✅</div>${pendingClaims.length+pendingEdits.length>0?`<div class="badge">${pendingClaims.length+pendingEdits.length}</div>`:''}</div><div class="quick-txt">审批</div></div>
       <div class="quick-item" onclick="go('salary')"><div class="quick-ico">💰</div><div class="quick-txt">加工费统计</div></div>
       <div class="quick-item" onclick="go('delivery')"><div class="quick-ico">⏰</div><div class="quick-txt">交期提醒</div></div>
     </div>
@@ -3375,16 +3390,24 @@ function vDashboard(){
 /* ---------- 订单列表 ---------- */
 function vOrders(){
   const kw=(state.orderKw||'').trim().toLowerCase();
-  const list=DB.orders.filter(o=>!kw||(o.workNo+o.productName+o.productNo).toLowerCase().includes(kw));
+  const fl=state.orderFilter||'all';
+  const doneOf=o=>orderDoneProgress(o.id)>=100;
+  let list=DB.orders.filter(o=>!kw||(o.workNo+o.productName+o.productNo).toLowerCase().includes(kw));
+  if(fl==='active')list=list.filter(o=>!doneOf(o));
+  if(fl==='done')list=list.filter(doneOf);
+  if(fl==='overdue')list=list.filter(o=>{const d=daysUntil(o.deliveryDate);return d!==null&&d<0&&!doneOf(o);});
+  const cnt={all:DB.orders.length,active:DB.orders.filter(o=>!doneOf(o)).length,done:DB.orders.filter(doneOf).length,overdue:DB.orders.filter(o=>{const d=daysUntil(o.deliveryDate);return d!==null&&d<0&&!doneOf(o);}).length};
+  const tabs=[['all','全部'],['active','生产中'],['done','已完成'],['overdue','已逾期']];
   return `
-  <div class="header"><div class="header-title">📦 订单管理</div><div class="header-sub">共 ${DB.orders.length} 张工单</div></div>
+  <div class="header"><div class="header-title">📦 订单管理</div><div class="header-sub">共 ${DB.orders.length} 张工单 · ${cnt.done} 张已完工</div></div>
   <div class="page" style="padding-top:0">
     <div class="card" style="padding:11px"><input class="input" placeholder="搜索工单号 / 成品名称" value="${state.orderKw||''}" oninput="state.orderKw=this.value;render()"></div>
-    ${list.length===0?'<div class="empty"><span class="empty-emoji">📭</span>暂无订单</div>':list.map(o=>{return `
+    <div class="tabs" style="padding:0 16px 4px">${tabs.map(([k,t])=>`<div class="tab ${fl===k?'on':''}" onclick="state.orderFilter='${k}';render()">${t} ${cnt[k]>0?`<span class="text-sm text-3">${cnt[k]}</span>`:''}</div>`).join('')}</div>
+    ${list.length===0?'<div class="empty"><span class="empty-emoji">📭</span>暂无订单</div>':list.map(o=>{const done=doneOf(o);const d=daysUntil(o.deliveryDate);return `
     <div class="card order-card" onclick="openOrder('${o.id}')">
-      <div class="row-between"><div class="bold">${o.workNo}</div><div class="tag ${daysUntil(o.deliveryDate)<0?'tag-overdue':'tag-processing'}">${o.hasSwitch?'有开关':'无开关'}</div></div>
+      <div class="row-between"><div class="bold">${o.workNo}</div><div class="tag ${done?'tag-approved':(d!==null&&d<0?'tag-overdue':'tag-processing')}">${done?'✓ 已完工':(d!==null&&d<0?`逾期${-d}天`:(o.hasSwitch?'有开关':'无开关'))}</div></div>
       <div class="text-sm text-3" style="margin-top:5px">${o.productName}</div>
-      <div class="text-sm text-3" style="margin-top:3px">成品编号 ${o.productNo} · 数量 ${Number(o.qty).toLocaleString()}</div>
+      <div class="text-sm text-3" style="margin-top:3px">成品编号 ${o.productNo} · 数量 ${Number(o.qty).toLocaleString()}${o.deliveryDate?` · 交期 ${o.deliveryDate}`:''}</div>
       ${dualProgress(o.id,'领用进度','完工进度')}
     </div>`;}).join('')}
   </div>
@@ -3397,7 +3420,7 @@ function vOrderEntry(){
   const e=state.entry;
   const selNames=e.projectIds.map(pid=>DB.projects.find(p=>p.id===pid)?.name).filter(Boolean);
   return `
-  <div class="header"><div class="header-title">📷 订单录入</div><div class="header-sub">拍摄委外领料申请���，核对后保存生成分配</div></div>
+  <div class="header"><div class="header-title">📷 订单录入</div><div class="header-sub">拍摄委外领料申请单，核对后保存生成分配</div></div>
   <div class="page" style="padding-top:0">
     <div class="card ${e.detected?'ocr-card':''}">
       ${!e.detected?`<div class="cam-box"><div class="cam-ico">📄</div>
@@ -4068,15 +4091,25 @@ function vWork(){
   return `
   <div class="header"><div class="header-title">✍️ 报工</div><div class="header-sub">每天不限次数，随时记录完成情况</div></div>
   <div class="page" style="padding-top:0">
-  <div class="card"><div class="row-between"><div class="bold">${o.workNo}</div><div class="tag tag-approved">已同意</div></div><div class="text-sm text-3" style="margin-top:4px">${o.productName}</div><div class="divider"></div><div class="row-between"><div class="text-3 text-sm">今日已报工 ${works.length} 次</div><div class="money-sm">¥${money(todayAmount)}</div></div></div>
+  <div class="card"><div class="row-between"><div class="bold">${o.workNo}</div><div class="tag tag-approved">已同意</div></div><div class="text-sm text-3" style="margin-top:4px">${o.productName}</div><div class="divider"></div><div class="row-between"><div class="text-3 text-sm">今日已报工 ${works.length} 次 · ${works.reduce((s,w)=>s+w.qty,0).toLocaleString()} 件</div><div class="money-sm">¥${money(todayAmount)}</div></div></div>
   ${craftCard(o.id)}
   ${(()=>{const p=orderReportProgress(claim.orderId);return `<div class="card"><div class="row-between"><div class="card-title" style="margin:0">📊 订单进度</div><div class="text-sm text-3">${p.percent}%</div></div>${p.rows.map(r=>`<div class="prog-row"><div class="row-between"><div class="text-2">${r.name}</div><div class="text-sm ${r.reported>=r.total?'prog-full':'text-3'}">${r.reported} / ${r.total}</div></div><div class="prog-bar"><div class="prog-fill ${r.reported>=r.total?'prog-fill-full':''}" style="width:${r.percent}%"></div></div></div>`).join('')}</div>`;})()}
   <div class="card"><div class="card-title">录入完成数量</div>
     ${items.map(it=>{const rep=DB.works.filter(w=>w.orderId===claim.orderId&&w.stepId===it.id).reduce((s,w)=>s+w.qty,0);const total=it.orderQty;const remain=total-rep;return `<div class="work-row"><div class="work-info"><div class="bold">${it.name}</div><div class="text-sm text-3">单价 ¥${it.price} · 申领 ${it.totalQty}</div>${total>0?`<div class="text-sm" style="color:${remain>0?'var(--green)':'var(--red)'}">已报 ${rep} / 订单 ${total} · ${remain>0?'还可报 '+remain+' 件':'已报满，不可再报'}</div>`:''}</div>
       <div class="work-input-wrap"><input class="input work-input" type="number" placeholder="数量" id="wi_${it.id}"><button class="btn-primary work-submit" onclick="submitWork('${claim.id}','${it.id}',${it.price})">报工</button></div></div>`;}).join('')}</div>
   <div class="card"><div class="card-title">今日报工明细</div>
-    ${todayList.length===0?'<div class="text-sm text-3">今天还没有报工记录</div>':todayList.map(w=>`<div class="row-between detail-row"><div><div class="text-2">${w.stepName} × ${w.qty}</div><div class="text-sm text-3">${w.timeText}</div></div><div class="row" style="gap:8px;align-items:center"><div class="text-sm" style="color:var(--primary);cursor:pointer" onclick="openWorkEdit('${w.id}')">✏️改</div><div class="money-plus">+¥${money(w.amount)}</div></div></div>`).join('')}</div>
+    ${todayList.length===0?'<div class="text-sm text-3">今天还没有报工记录</div>':todayList.map(w=>`<div class="row-between detail-row"><div><div class="text-2">${w.stepName} × ${w.qty}</div><div class="text-sm text-3">${w.timeText}</div></div><div class="row" style="gap:8px;align-items:center"><div class="text-sm" style="color:var(--primary);cursor:pointer" onclick="openWorkEdit('${w.id}')">✏️改</div><div class="text-sm" style="color:var(--red);cursor:pointer" onclick="withdrawWork('${w.id}')">↩️撤回</div><div class="money-plus">+¥${money(w.amount)}</div></div></div>`).join('')}</div>
   </div>`;
+}
+function withdrawWork(wid){
+  const w=DB.works.find(x=>x.id===wid); if(!w)return;
+  if(!isToday(w.ts)){toast('只能撤回今天的报工');return;}
+  if(!confirm('确定撤回这笔报工吗？（'+w.qty+'件）'))return;
+  const o=getOrder(w.orderId)||{steps:[]};const s=(o.steps||[]).find(x=>x.id===w.stepId)||{};
+  DB.works=DB.works.filter(x=>x.id!==wid);
+  DB.editRequests=(DB.editRequests||[]).filter(r=>r.workId!==wid);
+  DB.notices.unshift({id:uid('n_'),type:'claim',title:'员工撤回报工',text:`${state.user.name} 撤回了 ${o.workNo||''}「${s.name||''} × ${w.qty}」的报工`,ts:Date.now(),read:false});
+  saveDb(); toast('已撤回'); render();
 }
 function submitWork(cid,sid,price){
   const el=$('wi_'+sid);const qty=el?Number(el.value):0;
