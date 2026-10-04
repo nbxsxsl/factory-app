@@ -2779,9 +2779,21 @@ function probeApi(){
 probeApi();
 
 /* 启动时：必拉服务器并合并（补回本地缺失的项目/用户），服务器更新则整体替换；登录页不打断输入 */
+function fetchT(u,ms){const c=new AbortController();const t=setTimeout(()=>c.abort(),ms);return fetch(u,{cache:'no-store',signal:c.signal}).finally(()=>clearTimeout(t));}
+/* 跨域不可达兑底：Pages 备用入口连不上服务器时，引导/自动跳转到同源正式入口（全功能+实时同步） */
+function crossOriginFallback(base){
+  if(document.getElementById('xo-mask'))return;
+  let left=4;
+  const m=document.createElement('div');m.id='xo-mask';
+  m.style.cssText='position:fixed;inset:0;z-index:99999;background:rgba(10,15,25,.94);color:#fff;display:flex;align-items:center;justify-content:center;padding:24px;text-align:center;font-family:sans-serif';
+  m.innerHTML=`<div style="max-width:340px"><div style="font-size:40px">📶</div><div style="font-size:18px;font-weight:bold;margin:10px 0">当前为备用入口，无法直连加工厂服务器</div><div style="font-size:13.5px;opacity:.8;line-height:1.6">完整功能与实时数据同步请使用正式入口：</div><div style="font-size:15px;color:#4da3ff;margin:8px 0;word-break:break-all">${base}</div><button onclick="location.replace('${base}')" style="margin-top:14px;padding:12px 22px;border:none;border-radius:10px;background:#2f7df6;color:#fff;font-size:15px;font-weight:bold">立即跳转</button><div style="margin-top:10px;font-size:12px;opacity:.65"><span style="cursor:pointer;text-decoration:underline" onclick="var e=document.getElementById('xo-mask');e&&e.remove()">留在本页（仅离线浏览）</span> · <span id="xo-cd">${left}s 后自动跳转</span></div></div>`;
+  document.body.appendChild(m);
+  const cd=setInterval(()=>{left--;const el=document.getElementById('xo-cd');if(el)el.textContent=left+'s 后自动跳转';if(left<=0){clearInterval(cd);location.replace(base);}},1000);
+}
 (function(){
   probeApi().then(base=>{
-    fetch(base+'/api/db',{cache:'no-store'}).then(r=>r.json()).then(d=>{
+    const sameOrigin=!base||location.href.indexOf(base)===0;
+    fetchT(base+'/api/db',6000).then(r=>r.json()).then(d=>{
       if(d && d.users && d.orders){
         let changed=false;
         if(!localStorage.getItem('factory_db_v2') || (d.updatedAt||0) > (DB.updatedAt||0) + 5000){
@@ -2794,10 +2806,11 @@ probeApi();
         (d.users||[]).forEach(u=>{ if(!phs.has(u.phone)){ DB.users.push(u); changed=true; } });
         if(changed){ saveDb(); if(state.user) render(); }
       }
-    }).catch(()=>{});
+    }).catch(()=>{ if(!sameOrigin) crossOriginFallback(base); });
   });
 })();
 /* 迁移：确保最高权限账号存在（所有设备自动获得，无需清缓存） */
+if(!DB.editRequests)DB.editRequests=[];
 if(!DB.users.some(u=>u.phone==='13251903281')){
   DB.users.push({id:'su1',name:'谢总',phone:'13251903281',workNo:'S001',role:'superadmin',status:'active',pwd:'xieyun123'});
 }
@@ -3070,6 +3083,7 @@ function render(){
   const fn=views[state.view]||vLogin;
   s.innerHTML=fn()+tabbar();
   if(state.showScrewModal) s.innerHTML+=screwModal();
+  if(state.workEditId) s.innerHTML+=workEditModal();
   if(state.currentQr) s.innerHTML+=qrModal();
   bindClock();
   saveDb();
@@ -3383,7 +3397,7 @@ function vOrderEntry(){
   const e=state.entry;
   const selNames=e.projectIds.map(pid=>DB.projects.find(p=>p.id===pid)?.name).filter(Boolean);
   return `
-  <div class="header"><div class="header-title">📷 订单录入</div><div class="header-sub">拍摄委外领料申请单，核对后保存生成分配</div></div>
+  <div class="header"><div class="header-title">📷 订单录入</div><div class="header-sub">拍摄委外领料申请���，核对后保存生成分配</div></div>
   <div class="page" style="padding-top:0">
     <div class="card ${e.detected?'ocr-card':''}">
       ${!e.detected?`<div class="cam-box"><div class="cam-ico">📄</div>
@@ -3397,7 +3411,7 @@ function vOrderEntry(){
       <div class="field"><div class="field-label">单号 ${e.workNoAuto?'（自动生成，可改）':''}</div><input class="input" value="${e.workNo}" onchange="setEntry('workNo',this.value)"></div>
       <div class="field"><div class="field-label">订单号</div><input class="input" value="${e.saleNo||''}" onchange="setEntry('saleNo',this.value)"></div>
       <div class="field"><div class="field-label">委外料号</div><input class="input" value="${e.productNo||''}" onchange="setEntry('productNo',this.value)"></div>
-      <div class="field"><div class="field-label">委外料品 *</div><input class="input" value="${e.productName||''}" placeholder="必填，如 1#汽泡棒 不锈��款 组装半成品" onchange="setEntry('productName',this.value)"></div>
+      <div class="field"><div class="field-label">委外料品 *</div><input class="input" value="${e.productName||''}" placeholder="必填，如 1#汽泡棒 不锈钢款 组装半成品" onchange="setEntry('productName',this.value)"></div>
       <div class="field"><div class="field-label">工单数量（件）*</div><input class="input" type="number" inputmode="numeric" value="${e.qty||''}" placeholder="必填" onchange="setEntry('qty',this.value)"></div>
       <div class="field"><div class="field-label">发料日期</div><input class="input" type="date" value="${(e.dateStr||'').replace(/\//g,'-')}" onchange="setEntry('dateStr',this.value)"></div>
       <button class="btn-ghost" style="width:100%;margin-top:8px" onclick="retake()">🔄 重拍 / 换照片</button>`}
@@ -3641,6 +3655,8 @@ function vApproval(){
   <div class="header"><div class="header-title">✅ 申领审批</div><div class="header-sub">员工申领后在此处理</div></div>
   <div class="tabs" style="padding-left:16px">${tabs.map(([k,t])=>`<div class="tab ${tab===k?'on':''}" onclick="state.approvalTab='${k}';render()">${t}</div>`).join('')}</div>
   <div class="page" style="padding-top:0">
+    ${(()=>{const pend=(DB.editRequests||[]).filter(r=>r.status==='pending'); if(!pend.length)return '';
+      return `<div class="card"><div class="card-title">✏️ 报工数量修改申请（${pend.length}）</div>${pend.map(r=>{const w=DB.works.find(x=>x.id===r.workId)||{};const o=getOrder(r.orderId)||{steps:[]};const s=(o.steps||[]).find(x=>x.id===r.stepId)||{};const u=DB.users.find(x=>x.id===r.workerId)||{};return `<div class="detail-row row-between" style="align-items:flex-start"><div><div class="text-2 bold">${u.name||'—'} · ${s.name||''} · ${o.workNo||''}</div><div class="text-sm text-3" style="margin:3px 0">${r.oldQty} 件 → 改为 <b style="color:var(--primary)">${r.newQty} 件</b></div><div class="text-sm text-3">提交时间 ${r.time||''}</div></div><div class="row" style="gap:8px"><button class="btn-mini-green" onclick="approveWorkEdit('${r.id}')">同意</button><button class="btn-mini-red" style="background:#FEE4E2;color:#D92D20" onclick="rejectWorkEdit('${r.id}')">驳回</button></div></div>`;}).join('')}</div>`;})()}
     ${list.length===0?'<div class="empty"><span class="empty-emoji">🎉</span>暂无记录</div>':list.map(c=>`
     <div class="card">
       <div class="row-between"><div class="bold">${c.workerName}</div><div class="tag ${map[c.status][1]}">${map[c.status][0]}</div></div>
@@ -3774,7 +3790,7 @@ function vSalary(){
       <div class="tbl-row total"><div class="col-name">本订单结算合计</div><div class="col-qty">${o.qty}</div><div class="col-price"></div><div class="col-amt">¥${money(o.amount)}</div></div>`:`<div class="tbl-row"><div class="col-name text-3" style="font-size:12px">点击展开：各加工人员的项目 · 数量 · 金额</div><div class="col-qty"></div><div class="col-amt">¥${money(o.amount)}</div></div>`}
     </div>`;}).join('')):(details.length===0?'<div class="empty"><span class="empty-emoji">💤</span>该时段暂无加工费</div>':`<div class="pay-table">
       <div class="tbl-head"><div style="width:28px">#</div><div style="width:70px">员工</div><div style="width:96px">工单号</div><div style="width:90px">项目</div><div style="width:60px;text-align:right">数量</div><div style="width:56px;text-align:right">单价</div><div style="width:70px;text-align:right">金额</div><div style="width:74px;text-align:right">日期</div></div>
-      ${details.map((w,i)=>{const o=getOrder(w.orderId)||{steps:[]};const s=(o.steps||[]).find(x=>x.id===w.stepId)||{};const u=DB.users.find(x=>x.id===w.workerId)||{};return `<div class="tbl-row"><div style="width:28px" class="text-3">${i+1}</div><div style="width:70px">${u.name||'—'}</div><div style="width:96px">${o.workNo||'—'}</div><div style="width:90px">${s.name||w.stepId}</div><div style="width:60px;text-align:right">${w.qty}</div><div style="width:56px;text-align:right">¥${money(w.price)}</div><div style="width:70px;text-align:right" class="money-plus">¥${money(w.amount)}</div><div style="width:74px;text-align:right" class="text-3">${dayKey(w.ts).slice(5)}</div></div>`;}).join('')}
+      ${details.map((w,i)=>{const o=getOrder(w.orderId)||{steps:[]};const s=(o.steps||[]).find(x=>x.id===w.stepId)||{};const u=DB.users.find(x=>x.id===w.workerId)||{};return `<div class="tbl-row"><div style="width:28px" class="text-3">${i+1}</div><div style="width:70px">${u.name||'—'}</div><div style="width:96px">${o.workNo||'—'}</div><div style="width:90px">${s.name||w.stepId}</div><div style="width:60px;text-align:right">${w.qty} <span style="color:var(--primary);cursor:pointer" onclick="openAdminWorkEdit('${w.id}')">✏️</span></div><div style="width:56px;text-align:right">¥${money(w.price)}</div><div style="width:70px;text-align:right" class="money-plus">¥${money(w.amount)}</div><div style="width:74px;text-align:right" class="text-3">${dayKey(w.ts).slice(5)}</div></div>`;}).join('')}
       <div class="tbl-row total"><div style="width:28px"></div><div style="width:70px">合计</div><div style="width:96px">${works.length} 笔</div><div style="width:90px"></div><div style="width:60px;text-align:right">${totalQty}</div><div style="width:56px"></div><div style="width:70px;text-align:right" class="money">¥${money(total)}</div><div style="width:74px"></div></div>
     </div>`)}
   </div>`;
@@ -4059,7 +4075,7 @@ function vWork(){
     ${items.map(it=>{const rep=DB.works.filter(w=>w.orderId===claim.orderId&&w.stepId===it.id).reduce((s,w)=>s+w.qty,0);const total=it.orderQty;const remain=total-rep;return `<div class="work-row"><div class="work-info"><div class="bold">${it.name}</div><div class="text-sm text-3">单价 ¥${it.price} · 申领 ${it.totalQty}</div>${total>0?`<div class="text-sm" style="color:${remain>0?'var(--green)':'var(--red)'}">已报 ${rep} / 订单 ${total} · ${remain>0?'还可报 '+remain+' 件':'已报满，不可再报'}</div>`:''}</div>
       <div class="work-input-wrap"><input class="input work-input" type="number" placeholder="数量" id="wi_${it.id}"><button class="btn-primary work-submit" onclick="submitWork('${claim.id}','${it.id}',${it.price})">报工</button></div></div>`;}).join('')}</div>
   <div class="card"><div class="card-title">今日报工明细</div>
-    ${todayList.length===0?'<div class="text-sm text-3">今天还没有报工记录</div>':todayList.map(w=>`<div class="row-between detail-row"><div><div class="text-2">${w.stepName} × ${w.qty}</div><div class="text-sm text-3">${w.timeText}</div></div><div class="money-plus">+¥${money(w.amount)}</div></div>`).join('')}</div>
+    ${todayList.length===0?'<div class="text-sm text-3">今天还没有报工记录</div>':todayList.map(w=>`<div class="row-between detail-row"><div><div class="text-2">${w.stepName} × ${w.qty}</div><div class="text-sm text-3">${w.timeText}</div></div><div class="row" style="gap:8px;align-items:center"><div class="text-sm" style="color:var(--primary);cursor:pointer" onclick="openWorkEdit('${w.id}')">✏️改</div><div class="money-plus">+¥${money(w.amount)}</div></div></div>`).join('')}</div>
   </div>`;
 }
 function submitWork(cid,sid,price){
@@ -4078,6 +4094,55 @@ function submitWork(cid,sid,price){
   }
   DB.works.push({id:uid('k_'),claimId:cid,workerId:state.user.id,orderId:claim.orderId,stepId:sid,qty,price,amount:Number((qty*price).toFixed(2)),ts:Date.now()});
   toast('已报工 ¥'+money(qty*price));render();
+}
+
+/* ---------- 报工数量修改（员工申请→管理员审核；管理员可直接改） ---------- */
+function openWorkEdit(wid){ state.workEditId=wid; state.workEditVal=''; state.workEditAdmin=false; render(); }
+function openAdminWorkEdit(wid){ state.workEditId=wid; state.workEditVal=''; state.workEditAdmin=true; render(); }
+function setWorkEditVal(v){ state.workEditVal=v; }
+function workEditModal(){
+  const w=DB.works.find(x=>x.id===state.workEditId); if(!w)return '';
+  const o=getOrder(w.orderId)||{steps:[]};const s=(o.steps||[]).find(x=>x.id===w.stepId)||{};
+  const pend=!state.workEditAdmin&&DB.editRequests.some(r=>r.workId===w.id&&r.status==='pending');
+  return `<div class="mask" onclick="state.workEditId=null;render()"><div class="panel" onclick="event.stopPropagation()">
+    <div class="panel-title">✏️ 修改报工数量</div>
+    <div class="panel-sub">${s.name||''} · 当前 ${w.qty} 件 · ¥${money(w.amount)}</div>
+    ${pend?'<div class="text-sm" style="color:var(--orange)">该笔已有一份待审核的修改申请，请等待管理员处理</div>':`
+    <input class="input" type="number" style="width:100%" placeholder="输入正确数量" value="${state.workEditVal||''}" oninput="setWorkEditVal(this.value)">
+    <button class="btn-primary" style="margin-top:10px;width:100%" onclick="confirmWorkEdit()">${state.workEditAdmin?'直接修改生效':'提交修改申请'}</button>
+    ${state.workEditAdmin?'':'<div class="text-sm text-3" style="margin-top:6px">提交后需管理员审核，通过后才生效并重算金额</div>'}`}
+    <button class="btn-ghost" style="width:100%;margin-top:8px" onclick="state.workEditId=null;render()">取消</button>
+  </div></div>`;
+}
+function applyWorkQty(w,nq){ w.qty=nq; const o=getOrder(w.orderId)||{steps:[]};const s=(o.steps||[]).find(x=>x.id===w.stepId)||{};const p=Number(s.price)||w.price||0;w.price=p;w.amount=Number((w.qty*p).toFixed(2)); }
+function confirmWorkEdit(){
+  const w=DB.works.find(x=>x.id===state.workEditId); if(!w)return;
+  const nq=Number(state.workEditVal);
+  if(!nq||nq<=0){toast('请输入正确数量');return;}
+  if(nq===w.qty){toast('数量未变化');return;}
+  if(state.workEditAdmin){
+    applyWorkQty(w,nq);
+    const u=DB.users.find(x=>x.id===w.workerId)||{};
+    DB.notices.unshift({id:uid('n_'),type:'claim',title:'管理员修改报工',text:`${u.name||''} 的报工数量已由管理员改为 ${nq} 件，金额已重算`,ts:Date.now(),read:false});
+    state.workEditId=null; saveDb(); toast('已修改并生效'); render(); return;
+  }
+  DB.editRequests.push({id:uid('e_'),workId:w.id,workerId:w.workerId,orderId:w.orderId,stepId:w.stepId,oldQty:w.qty,newQty:nq,status:'pending',time:todayStr()+' '+new Date().toTimeString().slice(0,5)});
+  DB.notices.unshift({id:uid('n_'),type:'system',title:'修改申请已提交',text:'报工数量修改申请已提交，等待管理员审核',ts:Date.now(),read:false});
+  state.workEditId=null; saveDb(); toast('已提交，等待管理员审核'); render();
+}
+function approveWorkEdit(rid){
+  const r=DB.editRequests.find(x=>x.id===rid); if(!r)return;
+  const w=DB.works.find(x=>x.id===r.workId);
+  if(w)applyWorkQty(w,r.newQty);
+  r.status='approved';
+  DB.notices.unshift({id:uid('n_'),type:'claim',title:'报工修改已通过',text:`报工数量 ${r.oldQty} → ${r.newQty} 件已生效，金额已重算`,ts:Date.now(),read:false});
+  saveDb(); toast('已通过并生效'); render();
+}
+function rejectWorkEdit(rid){
+  const r=DB.editRequests.find(x=>x.id===rid); if(!r)return;
+  r.status='rejected'; r.reason='管理员驳回';
+  DB.notices.unshift({id:uid('n_'),type:'claim',title:'报工修改被驳回',text:`${r.oldQty} → ${r.newQty} 件的修改申请被驳回`,ts:Date.now(),read:false});
+  saveDb(); toast('已驳回'); render();
 }
 
 /* ---------- 员工端 —— 我的加工费（汇总表/明细 + 日历） ---------- */
@@ -4113,7 +4178,7 @@ function vMySalary(){
   ${mode==='byorder'?(()=>{const omap=new Map();works.forEach(w=>{if(!omap.has(w.orderId))omap.set(w.orderId,{no:(getOrder(w.orderId)||{}).workNo||'—',qty:0,amount:0,count:0,steps:new Map()});const g=omap.get(w.orderId);g.qty+=w.qty;g.amount+=w.amount;g.count+=1;const o=getOrder(w.orderId)||{steps:[]};const s=(o.steps||[]).find(x=>x.id===w.stepId)||{};const nm=s.name||w.stepId;if(!g.steps.has(nm))g.steps.set(nm,{qty:0,amount:0});const st=g.steps.get(nm);st.qty+=w.qty;st.amount+=w.amount;});const groups=[...omap.entries()].sort((a,b)=>b[0]<a[0]?-1:1);return groups.map(([oid,g])=>`<div class="card"><div class="row-between"><div class="bold">📋 ${g.no}</div><div class="money-plus">¥${money(g.amount)}</div></div><div class="text-sm text-3" style="margin:4px 0 8px">${g.count} 笔 · 共 ${g.qty} 件</div><div class="pay-table">${[...g.steps.entries()].map(([nm,st])=>`<div class="tbl-row"><div class="col-name">${nm}</div><div class="col-qty">${st.qty}</div><div class="col-amt">¥${money(st.amount)}</div></div>`).join('')}</div></div>`).join('');})():''}
   ${mode==='detail'&&details.length>0?`<div class="pay-table">
     <div class="tbl-head"><div style="width:28px">#</div><div style="width:96px">工单号</div><div style="width:90px">项目</div><div style="width:60px;text-align:right">数量</div><div style="width:56px;text-align:right">单价</div><div style="width:70px;text-align:right">金额</div><div style="width:74px;text-align:right">日期</div></div>
-    ${details.map((w,i)=>{const o=getOrder(w.orderId)||{steps:[]};const s=(o.steps||[]).find(x=>x.id===w.stepId)||{};return `<div class="tbl-row"><div style="width:28px" class="text-3">${i+1}</div><div style="width:96px">${o.workNo||'—'}</div><div style="width:90px">${s.name||w.stepId}</div><div style="width:60px;text-align:right">${w.qty}</div><div style="width:56px;text-align:right">¥${money(w.price)}</div><div style="width:70px;text-align:right" class="money-plus">¥${money(w.amount)}</div><div style="width:74px;text-align:right" class="text-3">${dayKey(w.ts).slice(5)}</div></div>`;}).join('')}
+    ${details.map((w,i)=>{const o=getOrder(w.orderId)||{steps:[]};const s=(o.steps||[]).find(x=>x.id===w.stepId)||{};return `<div class="tbl-row"><div style="width:28px" class="text-3">${i+1}</div><div style="width:96px">${o.workNo||'—'}</div><div style="width:90px">${s.name||w.stepId}</div><div style="width:60px;text-align:right">${w.qty} <span style="color:var(--primary);cursor:pointer" onclick="openWorkEdit('${w.id}')">✏️</span></div><div style="width:56px;text-align:right">¥${money(w.price)}</div><div style="width:70px;text-align:right" class="money-plus">¥${money(w.amount)}</div><div style="width:74px;text-align:right" class="text-3">${dayKey(w.ts).slice(5)}</div></div>`;}).join('')}
     <div class="tbl-row total"><div style="width:28px"></div><div style="width:96px">合计</div><div style="width:90px">${works.length} 笔</div><div style="width:60px;text-align:right">${totalQty}</div><div style="width:56px"></div><div style="width:70px;text-align:right" class="money">¥${money(total)}</div><div style="width:74px"></div></div>
   </div>`:''}
   </div>`;
